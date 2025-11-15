@@ -64,9 +64,12 @@ impl RadioButton {
 impl RadioButton {
     /// Check or uncheck the box.
     pub fn set_checked(this: &mut WidgetMut<'_, Self>, checked: bool) {
-        this.widget.checked = checked;
-        // Checked state impacts appearance and accessibility node
-        this.ctx.request_render();
+        let has_changed = this.widget.checked != checked;
+        if has_changed {
+            this.widget.checked = checked;
+            // Checked state impacts appearance and accessibility node
+            this.ctx.request_render();
+        }
     }
 
     /// Set the text.

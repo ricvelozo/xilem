@@ -27,7 +27,7 @@ pub struct EnvironmentItem {
     // TODO: Can we/do we want to make these share an allocation?
     // TODO: How do we GC this?
     // TODO: The change listeners currently aren't ever notified.
-    change_listeners: Vec<Option<Arc<[ViewId]>>>,
+    pub change_listeners: Vec<Option<Arc<[ViewId]>>>,
 }
 
 #[derive(Debug)]
@@ -35,7 +35,7 @@ pub struct EnvironmentItem {
 pub struct Slot {
     #[expect(missing_docs, reason = "Public on an interim basis")]
     pub item: Option<EnvironmentItem>,
-    ref_count: u32,
+    pub ref_count: u32,
     // generation: u32,
 }
 
@@ -55,8 +55,8 @@ pub struct Environment {
     #[expect(missing_docs, reason = "Public on an interim basis")]
     pub slots: Vec<Slot>,
     // We use u32 here so that we could move to a generation
-    free_slots: Vec<u32>,
-    types: HashMap<TypeId, u32>,
+    pub free_slots: Vec<u32>,
+    pub types: HashMap<TypeId, u32>,
     // TODO: Think about how to handle this.
     // queued_rebuilds: Vec<Arc<[ViewId]>>,
 }
@@ -77,7 +77,8 @@ impl Environment {
     }
 
     // TODO: Possibly reconsider the name here.
-    fn create_slot_for_type<Context>(&mut self) -> u32
+    /// TODO
+    pub fn create_slot_for_type<Context>(&mut self) -> u32
     where
         Context: Resource,
     {
@@ -177,14 +178,15 @@ pub struct Provides<State, Action, Context: Resource, InitialContext, ChildView>
 }
 
 #[derive(Debug)]
-#[expect(
-    unnameable_types,
-    reason = "Implementation detail, public because of trait visibility rules"
-)]
+// #[expect(
+//     unnameable_types,
+//     reason = "Implementation detail, public because of trait visibility rules"
+// )]
+/// TODO
 pub struct ProvidesState<ChildState> {
-    child_state: ChildState,
-    this_state: Option<EnvironmentItem>,
-    environment_slot: u32,
+    pub child_state: ChildState,
+    pub this_state: Option<EnvironmentItem>,
+    pub environment_slot: u32,
 }
 
 impl<State, Action, Context, InitialContext, ChildView> ViewMarker
@@ -396,10 +398,10 @@ pub struct WithContext<State, Action, Context: Resource, Child, ChildView> {
     reason = "Implementation detail, public because of trait visibility rules"
 )]
 pub struct WithContextState<ChildState, ChildView> {
-    prev: ChildView,
-    child_state: ChildState,
-    environment_slot: u32,
-    listener_index: Option<usize>,
+    pub prev: ChildView,
+    pub child_state: ChildState,
+    pub environment_slot: u32,
+    pub listener_index: Option<usize>,
 }
 
 const WITH_CONTEXT_CHILD: ViewId = ViewId::new(0);

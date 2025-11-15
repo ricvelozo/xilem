@@ -15,7 +15,7 @@ use anymore::AnyDebug;
 #[derive(Debug)]
 pub struct MessageContext {
     // TODO: Just plain pub?
-    pub(crate) environment: Environment,
+    pub environment: Environment,
     full_id_path: Vec<ViewId>,
     id_path_index: usize,
     message: Option<DynMessage>,

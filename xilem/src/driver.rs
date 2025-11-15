@@ -291,6 +291,15 @@ where
                 self.run_logic(masonry_ctx);
             }
             MessageResult::RequestRebuild => {
+                // TODO: Hack, Should this be the default instead (to avoid having to specify the type for `Action`
+                self.run_logic(masonry_ctx);
+                let Some(window) = self.windows.get_mut(&window_id) else {
+                    tracing::warn!(
+                        window_id = window_id.trace(),
+                        "call on_action call for unknown window"
+                    );
+                    return;
+                };
                 window.view_ctx.set_state_changed(false);
                 window.view.rebuild_root_widget(
                     &window.view,

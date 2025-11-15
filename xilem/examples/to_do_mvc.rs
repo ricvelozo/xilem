@@ -28,6 +28,8 @@ enum Filter {
 struct TaskList {
     next_task: String,
     filter: Filter,
+    // TODO: remove
+    other_filter: Filter,
     tasks: Vec<Task>,
 }
 
@@ -88,20 +90,25 @@ fn app_logic(task_list: &mut TaskList) -> impl WidgetView<TaskList> + use<> {
         })
         .collect::<Vec<_>>();
 
-    let filter_tasks = |label, filter| {
-        radio_button(
-            label,
-            task_list.filter == filter,
-            move |state: &mut TaskList| state.filter = filter,
-        )
-    };
     let has_tasks = !task_list.tasks.is_empty();
     let footer = has_tasks.then(|| {
-        radio_group(flex_row((
-            filter_tasks("All", Filter::All),
-            filter_tasks("Active", Filter::Active),
-            filter_tasks("Completed", Filter::Completed),
-        )))
+        radio_group(
+            |task_list: &mut TaskList| &mut task_list.filter,
+            flex_row((
+                radio_button("All", Filter::All),
+                radio_button("Active", Filter::Active),
+                radio_button("Completed", Filter::Completed),
+                // TODO remove, this is just a temporary test for composing multiple radio groups with the same type
+                radio_group(
+                    |task_list: &mut TaskList| &mut task_list.other_filter,
+                    flex_col((
+                        radio_button("Other All", Filter::All),
+                        radio_button("Other Active", Filter::Active),
+                        radio_button("Other Completed", Filter::Completed),
+                    )),
+                ),
+            )),
+        )
     });
 
     flex_col((first_line, tasks, footer)).padding(50.0)
@@ -126,6 +133,7 @@ fn run(event_loop: EventLoopBuilder) -> Result<(), EventLoopError> {
                 done: false,
             },
         ],
+        other_filter: Filter::Active,
     };
 
     let app = Xilem::new_simple(data, app_logic, WindowOptions::new("To Do MVC"));

@@ -2,18 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::core::{MessageContext, Mut, ViewMarker};
+use crate::view::RadioGroupState;
 use crate::{MessageResult, Pod, View, ViewCtx};
 
 use masonry::core::ArcStr;
 use masonry::widgets::{self, RadioButtonToggled};
+use xilem_core::ViewPathTracker as _;
 
 /// An element which can be in checked and unchecked state.
 ///
 /// # Example
-/// ```ignore
-/// use xilem::view::{flex_row, radio_button};
+/// ```
+/// use xilem::view::{flex_row, radio_button, radio_group};
+/// # use xilem::WidgetView;
 ///
-/// #[derive(Debug, PartialEq, Eq)]
+/// #[derive(PartialEq, Clone)]
 /// enum Fruit {
 ///     Banana,
 ///     Apple,
@@ -24,32 +27,24 @@ use masonry::widgets::{self, RadioButtonToggled};
 ///     fruit: Fruit,
 /// }
 ///
-/// // ...
-///
-/// flex_row((
-///     radio_button("Banana", app_state.fruit == Fruit::Banana, |app_state: &mut State| {
-///         app_state.fruit = Fruit::Banana;
-///     }),
-///     radio_button("Apple", app_state.fruit == Fruit::Apple, |app_state: &mut State| {
-///         app_state.fruit = Fruit::Apple;
-///     }),
-///     radio_button("Lime", app_state.fruit == Fruit::Lime, |app_state: &mut State| {
-///         app_state.fruit = Fruit::Lime;
-///     }),
-/// ))
+/// # fn view() -> impl WidgetView<State> {
+/// radio_group(
+///    |state: &mut State| &mut state.fruit,
+///    flex_row((
+///        radio_button("Banana", Fruit::Banana),
+///        radio_button("Apple", Fruit::Apple),
+///        radio_button("Lime", Fruit::Lime),
+///     ))
+/// )
+/// # }
 /// ```
-pub fn radio_button<F, State, Action>(
-    label: impl Into<ArcStr>,
-    checked: bool,
-    callback: F,
-) -> RadioButton<F>
+pub fn radio_button<Value>(label: impl Into<ArcStr>, value: Value) -> RadioButton<Value>
 where
-    F: Fn(&mut State) -> Action + Send + 'static,
+    Value: PartialEq + Clone + 'static,
 {
     RadioButton {
         label: label.into(),
-        callback,
-        checked,
+        value,
         disabled: false,
     }
 }
@@ -58,14 +53,13 @@ where
 ///
 /// See `radio_button` documentation for more context.
 #[must_use = "View values do nothing unless provided to Xilem."]
-pub struct RadioButton<F> {
+pub struct RadioButton<Value> {
     label: ArcStr,
-    checked: bool,
-    callback: F,
+    value: Value,
     disabled: bool,
 }
 
-impl<F> RadioButton<F> {
+impl<Value> RadioButton<Value> {
     /// Set the disabled state of the widget.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
@@ -73,30 +67,105 @@ impl<F> RadioButton<F> {
     }
 }
 
-impl<F> ViewMarker for RadioButton<F> {}
-impl<F, State, Action> View<State, Action, ViewCtx> for RadioButton<F>
+impl<Value> ViewMarker for RadioButton<Value> {}
+impl<Value, State, Action> View<State, Action, ViewCtx> for RadioButton<Value>
 where
-    F: Fn(&mut State) -> Action + Send + Sync + 'static,
+    State: 'static,
+    Value: PartialEq + Clone + 'static,
 {
     type Element = Pod<widgets::RadioButton>;
-    type ViewState = ();
+    type ViewState = xilem_core::WithContextState<(), ()>;
 
-    fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
-        ctx.with_leaf_action_widget(|ctx| {
-            let mut pod =
-                ctx.create_pod(widgets::RadioButton::new(self.checked, self.label.clone()));
-            pod.new_widget.options.disabled = self.disabled;
-            pod
-        })
+    fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
+        let path: std::sync::Arc<[xilem_core::ViewId]> = ctx.view_path().into();
+        // ctx.with_action_widget(|ctx| {
+        let env = ctx.environment();
+        let pos = env.get_slot_for_type::<RadioGroupState<State, Value>>();
+        let Some(pos) = pos else {
+            // TODO: panic? Or warning, that no radio group with this `Value` was provided?
+            panic!(
+                // TODO: Track caller for this view?
+                "Xilem: Tried to get `radio_group` value access function for {}, \
+                    but it hasn't been provided. \
+                    Did you forget to wrap this view with a `xilem::view::radio_group`?",
+                core::any::type_name::<Value>()
+            );
+        };
+        let slot_idx = usize::try_from(pos).unwrap();
+        let slot = &mut env.slots[slot_idx];
+        // TODO: Should this be &mut or just a shared ref?
+        // If this gets modified, we won't rerun any other WithContexts for this value
+        // But some types are "pure", i.e. they manage their own dependencies?
+        let Some(value) = slot.item.as_mut() else {
+            panic!(
+                // TODO: Track caller for this view?
+                "Xilem: Tried to get context for {}, but it hasn't been `Provided`.",
+                core::any::type_name::<RadioGroupState<State, Value>>()
+            );
+        };
+        let access_value = value
+            .value
+            .downcast_mut::<RadioGroupState<State, Value>>()
+            .expect("Environment's slots should have the correct types.");
+
+        let mut first_empty = None;
+        let mut needs_storing = true;
+        // We store the path to this reader as a listener.
+        // This is required so that we can be alerted of any changes, so that any parent
+        // memoizing (or similar) views would correctly handle our value changing.
+        // N.B. This is strictly only needed if:
+        // 1) There actually is such a parent view
+        // 2) The path for rebuilding only needs to be the path to the closest such parent
+        //
+        // The future changes required to enable that are already partially accounted for here (i.e. checking
+        // if the current listening path is already included).
+        //
+        // Note also that there is currently no way to trigger these views!
+        for (idx, item) in value.change_listeners.iter().enumerate() {
+            if let Some(item) = item {
+                if **item == *path {
+                    needs_storing = false;
+                    break;
+                }
+            } else {
+                first_empty.get_or_insert(idx);
+            }
+        }
+
+        let listener_index = if needs_storing {
+            if let Some(first_empty) = first_empty {
+                value.change_listeners[first_empty] = Some(path);
+                Some(first_empty)
+            } else {
+                let idx = value.change_listeners.len();
+                value.change_listeners.push(Some(path));
+                Some(idx)
+            }
+        } else {
+            None
+        };
+        let checked = *(access_value.access_value)(app_state) == self.value;
+
+        let mut pod = ctx.create_pod(widgets::RadioButton::new(checked, self.label.clone()));
+        pod.new_widget.options.disabled = self.disabled;
+        let state = xilem_core::WithContextState {
+            prev: (),
+            child_state: (),
+            environment_slot: pos,
+            listener_index,
+        };
+        ctx.record_action(pod.new_widget.id());
+
+        (pod, state)
     }
 
     fn rebuild(
         &self,
         prev: &Self,
-        (): &mut Self::ViewState,
-        _ctx: &mut ViewCtx,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
-        _: &mut State,
+        app_state: &mut State,
     ) {
         if prev.disabled != self.disabled {
             element.ctx.set_disabled(self.disabled);
@@ -104,14 +173,26 @@ where
         if prev.label != self.label {
             widgets::RadioButton::set_text(&mut element, self.label.clone());
         }
-        if prev.checked != self.checked {
-            widgets::RadioButton::set_checked(&mut element, self.checked);
-        }
+        let env = ctx.environment();
+        let slot = &mut env.slots[usize::try_from(view_state.environment_slot).unwrap()];
+        let Some(value) = slot.item.as_mut() else {
+            panic!(
+                // TODO: Track caller for this view?
+                "Xilem: Tried to get access_value for {}, but it hasn't been provided by a radio group",
+                core::any::type_name::<RadioGroupState<State, Value>>()
+            );
+        };
+        let access_value = value
+            .value
+            .downcast_mut::<RadioGroupState<State, Value>>()
+            .expect("Environment's slots should have the correct types.");
+        let checked = *(access_value.access_value)(app_state) == self.value;
+        widgets::RadioButton::set_checked(&mut element, checked);
     }
 
     fn teardown(
         &self,
-        (): &mut Self::ViewState,
+        _: &mut Self::ViewState,
         ctx: &mut ViewCtx,
         element: Mut<'_, Self::Element>,
     ) {
@@ -120,9 +201,9 @@ where
 
     fn message(
         &self,
-        (): &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         message: &mut MessageContext,
-        _element: Mut<'_, Self::Element>,
+        mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
         debug_assert!(
@@ -130,7 +211,29 @@ where
             "id path should be empty in RadioButton::message"
         );
         match message.take_message::<RadioButtonToggled>() {
-            Some(_) => MessageResult::Action((self.callback)(app_state)),
+            Some(_) => {
+                let env = &mut message.environment;
+                let slot = &mut env.slots[usize::try_from(view_state.environment_slot).unwrap()];
+                let Some(value) = slot.item.as_mut() else {
+                    panic!(
+                        // TODO: Track caller for this view?
+                        "Xilem: Tried to get access_value for {}, but it hasn't been provided by a radio group",
+                        core::any::type_name::<RadioGroupState<State, Value>>()
+                    );
+                };
+                let access_value = value
+                    .value
+                    .downcast_mut::<RadioGroupState<State, Value>>()
+                    .expect("Environment's slots should have the correct types.");
+                let was_checked = *(access_value.access_value)(app_state) == self.value;
+                if !was_checked {
+                    *(access_value.access_value)(app_state) = self.value.clone();
+                    widgets::RadioButton::set_checked(&mut element, true);
+                    MessageResult::RequestRebuild
+                } else {
+                    MessageResult::Nop
+                }
+            }
             None => {
                 tracing::error!("Wrong message type in RadioButton::message, got {message:?}.");
                 MessageResult::Stale
